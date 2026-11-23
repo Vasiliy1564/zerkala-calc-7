@@ -1526,6 +1526,14 @@ header .tagline {
       </div>
     </div>
 
+    <div id="lead-switch-stav" style="margin:16px 0 18px;padding:16px;border:1px solid rgba(163,133,96,.38);border-radius:14px">
+      <div style="font-weight:700;margin-bottom:10px">Срок изготовления</div>
+      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">
+        <label style="cursor:pointer;font-size:14px;line-height:1.4"><input name="stavLead" type="radio" value="express" checked> <strong>До 7 дней</strong><small style="display:block;opacity:.75">до 250 × 160 см</small></label>
+        <label style="cursor:pointer;font-size:14px;line-height:1.4"><input name="stavLead" type="radio" value="standard"> <strong>До 10 дней</strong><small style="display:block;opacity:.75">до 300 × 200 см</small></label>
+      </div><div id="stavLeadNote" aria-live="polite" style="font-size:12px;opacity:.85;margin-top:12px">Рекомендуем изготовление до 7 дней.</div>
+    </div>
+
     <button class="calc-btn" onclick="calc()">Рассчитать стоимость</button>
 
     <div class="result" id="res">
@@ -1546,7 +1554,7 @@ header .tagline {
       </div>
     </div>
 
-    <div class="footer">Срок изготовления — от 2 дней до недели · Ставрополь</div>
+    <div class="footer">Срок изготовления — до 7 или 10 дней · Ставрополь</div>
   </div>
 
 <script>
@@ -1982,6 +1990,43 @@ function toggleCheck(el, id) {
   el.classList.toggle('active', state[id]);
 }
 
+/* Stavropol rate selector: fast 7 days / standard 10 days (maximum per sheet). */
+function stavLeadEligibility(){
+  const read=(id)=>parseFloat(document.getElementById(id)?.value)||0;
+  const shape=state.shape, w=read('w'),h=shape==='circle'?w:read('h'),w2=read('w2'),h2=read('h2');
+  const parts=(shape==='double')?[[w,h],[w2,h2]]:(shape==='semidouble')?[[w,h],[w2||w,h]]:[[w,h]];
+  const valid=parts.every(p=>p[0]>=40&&p[1]>=40);
+  const fits=(p,longSide,shortSide)=>Math.max(p[0],p[1])<=longSide&&Math.min(p[0],p[1])<=shortSide;
+  return {valid,express:valid&&parts.every(p=>fits(p,250,160)),standard:valid&&parts.every(p=>fits(p,300,200))};
+}
+function refreshStavLead(){
+  const fast=document.querySelector('input[name="stavLead"][value="express"]');
+  const slow=document.querySelector('input[name="stavLead"][value="standard"]');
+  if(!fast||!slow)return;
+  const e=stavLeadEligibility(),note=document.getElementById('stavLeadNote');
+  fast.disabled=e.valid&&!e.express;slow.disabled=e.valid&&!e.standard;
+  if(fast.disabled&&fast.checked){fast.checked=false;slow.checked=true;}
+  if(note)note.textContent=!e.valid?'Введите корректные размеры.':!e.standard?'Нужна индивидуальная смета: формат больше 300 × 200 см.':!e.express?'Для этих размеров доступно изготовление до 10 дней.':'Рекомендуем до 7 дней. Можно выбрать до 10 дней.';
+}
+function selectedStavLead(){
+  refreshStavLead();const e=stavLeadEligibility();
+  if(!e.standard)return null;
+  const radio=document.querySelector('input[name="stavLead"]:checked');
+  return radio?.value==='standard'?'standard':e.express?'express':'standard';
+}
+function updateStavLeadAndPrice(){
+  refreshStavLead();
+  if(document.getElementById('res')?.classList.contains('show'))calc(true);
+}
+document.addEventListener('DOMContentLoaded',()=>{
+  refreshStavLead();
+  document.getElementById('lead-switch-stav')?.addEventListener('change',updateStavLeadAndPrice);
+  for(const id of ['w','h','w2','h2']){
+    document.getElementById(id)?.addEventListener('input',refreshStavLead);
+    document.getElementById(id)?.addEventListener('change',updateStavLeadAndPrice);
+  }
+  document.querySelectorAll('[onclick*="pick("]').forEach(item=>item.addEventListener('click',()=>queueMicrotask(refreshStavLead)));
+});
 function fmt(n) { return Math.round(n).toLocaleString('ru-RU'); }
 
 function calcGeometry() {
@@ -2026,13 +2071,23 @@ function calcGeometry() {
   return { area, per, maxD };
 }
 
-function calc() {
+function calc(skipScroll) {
   const w = parseFloat(document.getElementById('w').value) || 0;
   const h = parseFloat(document.getElementById('h').value) || 0;
 
   if (w < 40 || (state.shape !== 'circle' && h < 40)) { alert('Минимальный размер — 40 см'); return; }
   if (w > 3410 || h > 2250) { alert('Максимальный размер — 3410×2250 мм'); return; }
 
+  const leadMode=selectedStavLead();
+  if(!leadMode){
+    document.getElementById('r-size').textContent='Слишком большой размер';
+    document.getElementById('r-sum').textContent='Индивидуальный расчёт';
+    document.getElementById('r-inc').textContent='Максимальный размер одного полотна 300 × 200 см. Уточните изготовление у мастера.';
+    document.getElementById('r-note').textContent='Точная цена определяется после согласования.';
+    document.getElementById('res').classList.add('show');return;
+  }
+  const glassRate=leadMode==='express'?1650:1500;
+  const days=leadMode==='express'?7:10;
   const geo = calcGeometry();
   const area = geo.area;
   const per = geo.per;
@@ -2069,7 +2124,7 @@ function calc() {
   }
 
   // === ЗАКУПОЧНЫЕ ЦЕНЫ (база без наценки) ===
-  const costMirror = area * 1500;        // зеркало 1500 ₽/м²
+  const costMirror = area * glassRate;        // 1650 ₽/м² за 7 дней или 1500 ₽/м² за 10 дней
   const costEdge = (state.facet === 'none') ? (per * 150) : 0;  // обработка 150 ₽/п.м
 
   // Комплектующие для подсветки (без наценки)
@@ -2141,14 +2196,14 @@ function calc() {
   if (state.install) inc += '<div class="row"><span>• Установка зеркала — ' + fmt(costInstall) + ' ₽</span></div>';
 
   document.getElementById('r-inc').innerHTML = inc;
-  document.getElementById('r-note').textContent = 'Срок изготовления — от 2 дней до недели. Замер бесплатно.';
+  document.getElementById('r-note').textContent = 'Срок изготовления — до '+days+' дней. Замер бесплатно.';
 
   // Build detailed order description
   const CLR_LABELS = { warm: 'тёплый', cold: 'холодный', neutral: 'нейтральный' };
   const CTRL_LABELS = { wave: 'взмах рукой', sensor: 'сенсор на зеркале', remote: 'пульт ДУ', smart: 'Wi-Fi / умный дом' };
   const FACET_LABELS = { none: 'без фацета', '10': 'фацет 10 мм', '20': 'фацет 20 мм', '25': 'фацет 25 мм' };
 
-  let details = [];
+  let details = ['изготовление до '+days+' дней'];
   if (state.light) {
     details.push('с LED-подсветкой (' + CLR_LABELS[state.clr] + ', управление: ' + CTRL_LABELS[state.ctrl] + ')');
   } else {
@@ -2184,7 +2239,7 @@ function calc() {
 
   const res = document.getElementById('res');
   res.classList.add('show');
-  res.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  if(!skipScroll)res.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 </script>
